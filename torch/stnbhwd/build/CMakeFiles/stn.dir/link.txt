@@ -1,0 +1,1 @@
+/usr/bin/cc  -fPIC  -fopenmp -O3 -DNDEBUG   -shared -Wl,-soname,libstn.so -o libstn.so CMakeFiles/stn.dir/init.c.o  -L/home/greg/torch/install/lib -lluaT /home/greg/torch/install/lib/libTH.so /opt/OpenBLAS/lib/libopenblas.so -lrt -Wl,-rpath,/home/greg/torch/install/lib:/opt/OpenBLAS/lib::::::::::::::: 

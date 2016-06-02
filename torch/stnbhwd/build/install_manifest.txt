@@ -1,0 +1,12 @@
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lib/libstn.so
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/stn/init.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/stn/AffineGridGeneratorBHWD.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/stn/BilinearSamplerBHWD.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/stn/AffineTransformMatrixGenerator.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/stn/test.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lib/libcustn.so
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/custn/init.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/custn/AffineGridGeneratorBHWD.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/custn/BilinearSamplerBHWD.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/custn/AffineTransformMatrixGenerator.lua
+/home/greg/torch/install/lib/luarocks/rocks/stnbhwd/scm-1/lua/custn/test.lua

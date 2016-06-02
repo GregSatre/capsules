@@ -1,0 +1,3 @@
+/home/greg/Research/Transforming Autoencoders/torch/stnbhwd/build/CMakeFiles/custn.dir
+/home/greg/Research/Transforming Autoencoders/torch/stnbhwd/build/CMakeFiles/stn.dir
+/home/greg/Research/Transforming Autoencoders/torch/stnbhwd/build/CMakeFiles/stn_static.dir

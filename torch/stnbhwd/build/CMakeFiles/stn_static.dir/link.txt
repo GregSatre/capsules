@@ -1,0 +1,2 @@
+/usr/bin/ar cr libstn.a  CMakeFiles/stn_static.dir/init.c.o
+/usr/bin/ranlib libstn.a
