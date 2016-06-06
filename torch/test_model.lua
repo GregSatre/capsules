@@ -18,10 +18,14 @@ if not opt then
    cmd:text('SVHN Training/Optimization')
    cmd:text()
    cmd:text('Options:')
-   cmd:option('-save', 'subdirectory to save/log experiments in')
+   cmd:option('-data', 'mnist', 'dataset to train on')
+   cmd:option('-save', 'results','subdirectory to save/log experiments in')
    cmd:option('-type', 'cuda', 'CPU or GPU training: double | cuda')
    cmd:option('-visualize', false, 'visualize input data and weights during training')
    cmd:option('-plot', false, 'live plot')
+   cmd:option('-translation', false, 'use translation')
+   cmd:option('-rotation', false, 'use rotation')
+   cmd:option('-scaling', false, 'use scaling')
    cmd:option('-optimization', 'SGD', 'optimization method: SGD | ASGD | CG | LBFGS | RMSProp')
    cmd:option('-learningRate', 1e-2, 'learning rate at t=0')
    cmd:option('-batchSize', 1, 'mini-batch size (1 = pure stochastic)')
@@ -39,33 +43,40 @@ end
 torch.manualSeed(12345)
 ----------------------------------------------------------------------
 -- Define dataset constants
-n_train_samples = 50000
+if opt.data == 'mnist' then
+    n_train_samples = 50000
+elseif opt.data == 'cifar' then
+    n_train_samples = 40000
+end
 n_valid_samples = 10000
 n_test_samples = 10000
 geometry = {32, 32}
-sampleSize = 32*32
+sampleSize = 32*32*3
 -- Define network hyperparameters
-depth = 1
+depth = 3
 height = 32
 width = 32
-t_height = 32
-t_width = 32
-hiddenSize1 = 500
+t_height = 12
+t_width = 12
+t_depth = 3
+hiddenSize1 = 1000
 hiddenSize2 = 1000
-hiddenSize3 = 500
-numCapsules = 12
-use_rot = true
-use_sca = true
-use_tra = true
+hiddenSize3 = 1000
+numCapsules = 50
+fullMode = not (opt.translation or opt.rotation or opt.scaling)
 numTransformParams = 0
-if use_rot then
-    numTransformParams = numTransformParams + 1
-end
-if use_sca then
-    numTransformParams = numTransformParams + 1
-end
-if use_tra then
-    numTransformParams = numTransformParams + 2
+if fullMode then
+    numTransformParams = 6
+else
+    if use_rot then
+        numTransformParams = numTransformParams + 1
+    end
+    if use_sca then
+        numTransformParams = numTransformParams + 1
+    end
+    if use_tra then
+        numTransformParams = numTransformParams + 2
+    end
 end
 -- Optimization hyperparameters
 momentum = 0.9
@@ -73,27 +84,37 @@ coefL1 = 0
 coefL2 = 0
 
 ----------------------------------------------------------------------
--- Load train and test sets
-trainData = mnist.loadTrainSet(n_train_samples+n_valid_samples, geometry)
-testData = mnist.loadTestSet(n_test_samples, geometry)
--- Normalize train and test sets
-trainData:normalizeGlobal()
-testData:normalizeGlobal()
--- Separate training and validation sets
--- print('==> loading yuv normalized cifar-10 data')
--- provider = torch.load 'provider.t7'
--- provider.trainData.data = provider.trainData.data:cuda()
--- provider.testData.data = provider.testData.data:cuda()
--- trainData = provider.trainData
--- testData = provider.testData
-validData = {
-                  data = trainData.data[{{n_train_samples+1, n_train_samples+n_valid_samples}, {}, {}, {}}]:clone(),
-                  size = function() return n_valid_samples end
+-- Load train and test sets. Normalize. Separate training and validation sets.
+if opt.data == 'mnist' then
+    trainData = mnist.loadTrainSet(n_train_samples+n_valid_samples, geometry)
+    testData = mnist.loadTestSet(n_test_samples, geometry)
+    trainData:normalizeGlobal()
+    testData:normalizeGlobal()
+    validData = {
+                    data = trainData.data[{{n_train_samples+1, n_train_samples+n_valid_samples}, {}, {}, {}}]:clone(),
+                    size = function() return n_valid_samples end
                 }
-trainData = {
-                data = trainData.data[{{1, n_train_samples}, {}, {}, {}}]:clone(),
-                size = function() return n_train_samples end
-              }
+    trainData = {
+                    data = trainData.data[{{1, n_train_samples}, {}, {}, {}}]:clone(),
+                    size = function() return n_train_samples end
+                }
+end
+if opt.data == 'cifar' then
+    print('==> loading yuv normalized cifar-10 data')
+    provider = torch.load 'provider.t7'
+    provider.trainData.data = provider.trainData.data:cuda()
+    provider.testData.data = provider.testData.data:cuda()
+    trainData = provider.trainData
+    testData = provider.testData
+    validData = {
+                    data = trainData.data[{{n_train_samples+1, n_train_samples+n_valid_samples}, {}, {}, {}}]:clone(),
+                    size = function() return n_valid_samples end
+                }
+    trainData = {
+                    data = trainData.data[{{1, n_train_samples}, {}, {}, {}}]:clone(),
+                    size = function() return n_train_samples end
+                }
+end
 ----------------------------------------------------------------------
 -- Define the model
 -- Feedforward encoder
@@ -131,16 +152,22 @@ concat = nn.ConcatTable()
 -- 1st concat branch: scale templates
 seq1 = nn.Sequential()
 seq1:add(nn.Narrow(2,1,numCapsules)) -- Split the obtained representation into a (BatchSize,numCapsules) Tensor of intensities
-seq1:add(nn.View(opt.batchSize, numCapsules,1,1))
+seq1:add(nn.View(opt.batchSize, numCapsules,1,1,1))
 seq1:add(nn.Sigmoid()) -- Intensities should be between 0 and 1
-seq1:add(nn.IntensityScale(numCapsules, t_height, t_width))
-seq1:add(nn.View(opt.batchSize*numCapsules, t_height, t_width, 1))
+seq1:add(nn.IntensityScale(numCapsules, t_height, t_width, t_depth))
+-- Constrain template values between 0 and 3
+constrainer = nn.Sequential()
+constrainer:add(nn.ConcatTable():add(nn.Exp()):add(nn.Sequential():add(nn.Exp()):add(nn.AddConstant(1))))
+constrainer:add(nn.CDivTable())
+constrainer:add(nn.MulConstant(3))
+seq1:add(constrainer)
+seq1:add(nn.View(opt.batchSize*numCapsules, t_height, t_width, t_depth))
 -- 2nd concat branch: generate sampling grid
 seq2 = nn.Sequential()
 seq2:add(nn.Narrow(2,numCapsules+1,numCapsules*numTransformParams)) -- Split the obtained representation into a (BatchSize,numCapsules*numTransformParams) Tensor of parameters
 -- seq2:add(nn.Tanh())
 seq2:add(nn.View(opt.batchSize*numCapsules, numTransformParams))
-seq2:add(nn.AffineTransformMatrixGenerator(use_rot, use_sca, use_tra))
+seq2:add(nn.AffineTransformMatrixGenerator(opt.rotation, opt.scaling, opt.translation))
 seq2:add(nn.AffineGridGeneratorBHWD(height, width))
 concat:add(seq1)
 concat:add(seq2)
@@ -148,14 +175,15 @@ concat:add(seq2)
 decoder = nn.Sequential()
 decoder:add(concat)
 decoder:add(nn.BilinearSamplerBHWD())
-decoder:add(nn.View(opt.batchSize, numCapsules, height, width)) -- This outputs a BatchSize,NumCapsules,depth,height,width Tensor of all transformed templates in the batch
+decoder:add(nn.View(opt.batchSize, numCapsules, height, width, depth)) -- This outputs a BatchSize,NumCapsules,height,width,depth Tensor of all transformed templates in the batch
+decoder:add(nn.Transpose({3,5},{4,5})) -- Transposes D and H, then W and H to get a BDHW output
 templateAdder = nn.Sequential()
 -- templateAdder:add(nn.Max(1, 3)) -- Dimension, nInputDims
 -- templateAdder:add(nn.MulConstant(10)) -- boolean indicates in place multiplication
--- templateAdder:add(nn.Exp())
-templateAdder:add(nn.Sum(1, 3)) -- Dimension, nInputDims. Outputs a BatchSize,height,width,depth Tensor
--- templateAdder:add(nn.Log())
-templateAdder:add(nn.MulConstant(1/numCapsules)) -- boolean indicates in place multiplication
+templateAdder:add(nn.Exp())
+templateAdder:add(nn.Sum(1, 4)) -- Dimension, nInputDims. Outputs a BatchSize,depth,height,width Tensor
+templateAdder:add(nn.Log())
+-- templateAdder:add(nn.MulConstant(1/10)) -- boolean indicates in place multiplication
 -- Add the templates together
 decoder:add(templateAdder)
 
@@ -173,7 +201,7 @@ criterion:cuda()
 parameters, gradParameters = model:getParameters()
 
 function getNextBatch()
-    local inputs = torch.Tensor(opt.batchSize,height,width)
+    local inputs = torch.Tensor(opt.batchSize,depth,height,width)
     local inputs = inputs:cuda()
     for j = 1,opt.batchSize do
         inputs[j] = trainData.data[shuffle[batch_index*opt.batchSize+j]]
@@ -220,13 +248,17 @@ function train()
     time = time / trainData:size()
     print("==> time to learn 1 sample = " .. (time*1000) .. 'ms')
     ----
+    -- Examine template values
+    local intscale = model:findModules('nn.IntensityScale')
+    local templates = intscale[1].template:clone():double():view(numCapsules,t_height,t_width,t_depth)
+    print("Max template value: "..tostring(templates:abs():max()))
     epoch = epoch + 1
     mean_batch_loss = mean_batch_loss/max_batches
     return mean_batch_loss
 end
 
 function validate()
-    valid_inputs = torch.Tensor(opt.batchSize,height,width):cuda()
+    valid_inputs = torch.Tensor(opt.batchSize,depth,height,width):cuda()
     local mean_valid_loss = 0
     local num_batches = 0
     for i=1,validData:size(),opt.batchSize do
@@ -242,7 +274,7 @@ function validate()
 end
 
 function test()
-    local test_inputs = torch.Tensor(opt.batchSize,height,width):cuda()
+    local test_inputs = torch.Tensor(opt.batchSize,depth,height,width):cuda()
     local mean_test_loss = 0
     local num_batches = 0
     for i=1,testData:size(),opt.batchSize do
@@ -258,18 +290,19 @@ function test()
 end
 
 function displaySamples(show_inputs, show_outputs, show_templates)
-    inputs = torch.Tensor(opt.batchSize,height,width):cuda()
+    local inputs = torch.Tensor(opt.batchSize,depth,height,width):cuda()
     for i=1,opt.batchSize do
-        inputs[i]=testData.data[i]
+        inputs[i]=trainData.data[shuffle[i]]
     end
 
-    outputs = model:forward(inputs)
+    local outputs = model:forward(inputs)
 
-    intscale = model:findModules('nn.IntensityScale')
+    local intscale = model:findModules('nn.IntensityScale')
     inputs = inputs:double()
     outputs = outputs:double()
-    templates = intscale[1].template:double():view(numCapsules,t_height,t_width)
-
+    print(inputs:size())
+    print(outputs:size())
+    -- local templates = intscale[1].template:double():view(numCapsules,t_height,t_width)
     if show_inputs then
         disp.image(inputs)
     end
@@ -292,23 +325,23 @@ optim_params = {
 epoch = 1
 batch_index = 0
 shuffle = torch.randperm(trainData:size())
-while epoch<50 do
+while epoch<200 do
     local train_loss = train()
-    local valid_loss = validate()
-    local test_loss = test()
-    if epoch%50 == 0 then
-        displaySamples(false, false, true)
-    end
-    logger:add{['mean train error'] = train_loss,
-               ['mean valid error'] = valid_loss,
-               ['mean test error'] = test_loss}
-    logger:style{['mean train error'] = '-',
-                 ['mean valid error'] = '-',
-                 ['mean test error'] = '-'}
-    -- logger:plot()
+    -- local valid_loss = validate()
+    -- local test_loss = test()
+    -- if epoch%50 == 0 then
+    --     displaySamples(false, true, false)
+    -- end
+    logger:add{['mean train error'] = train_loss}
+               -- ['mean valid error'] = valid_loss,
+               -- ['mean test error'] = test_loss}
+    logger:style{['mean train error'] = '-'}
+                 -- ['mean valid error'] = '-',
+                 -- ['mean test error'] = '-'}
+    logger:plot()
 end
 
-displaySamples(true, true, true)
+displaySamples(true, true, false)
 -- save current net
 if opt.save then
     local filename = paths.concat(opt.save, 'autoencoderSPN'..tostring(epoch)..'.net')
@@ -318,8 +351,8 @@ if opt.save then
 end
 -- save hyperparameters
 params_file = io.open(paths.concat(opt.save, 'hyperparameters.txt'), 'w')
-params_file:write('Translation '..tostring(use_tra)..'/n')
-params_file:write('Rotation '..tostring(use_rot)..'/n')
-params_file:write('Scaling '..tostring(use_sca)..'/n')
-params_file:write('Capsules '..tostring(numCapsules)..'/n')
+params_file:write('Translation '..tostring(use_tra)..'\n')
+params_file:write('Rotation '..tostring(use_rot)..'\n')
+params_file:write('Scaling '..tostring(use_sca)..'\n')
+params_file:write('Capsules '..tostring(numCapsules)..'\n')
 params_file:close()

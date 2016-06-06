@@ -3,24 +3,25 @@ disp = require 'display'
 
 local IntensityScale, Parent = torch.class('nn.IntensityScale', 'nn.Module')
 
-function IntensityScale:__init(numCapsules, height, width)
+function IntensityScale:__init(numCapsules, height, width, depth)
     Parent.__init(self)
-    self.template = torch.Tensor(1, numCapsules, height, width)
+    self.template = torch.Tensor(1, numCapsules, height, width, depth)
     self.gradTemplate = torch.Tensor(self.template:size())
     -- self.bsize = bsize
     self.numCapsules = numCapsules
     self.height = height
     self.width = width
+    self.depth = depth
     self:reset()
 end
 
--- input format : (BatchSize, numCapsules, 1,1) Tensor
+-- input format : (BatchSize, numCapsules, 1,1,1) Tensor
 function IntensityScale:updateOutput(input)
     -- checkDimension(input, self.bsize, self.numCapsules)
     local bsize = input:size()[1]
     -- Expand first, then clone
     -- self.output = self.template:expand(bsize, self.numCapsules, self.height, self.width):clone()
-    self.output = self.template:repeatTensor(bsize,1,1,1)
+    self.output = self.template:repeatTensor(bsize,1,1,1,1)
     local intensities = input:expand(self.output:size())
     -- Element-wise multiplication between intensities and output
     self.output:cmul(intensities)
@@ -34,7 +35,7 @@ function IntensityScale:updateGradInput(input, gradOutput)
     -- Element-wise multiplication between template and gradOutput_temp
     gradOutput_temp:cmul(self.template:expandAs(gradOutput))
     self.gradInput:resizeAs(input):zero()
-    self.gradInput = gradOutput_temp:sum(3):sum(4)
+    self.gradInput = gradOutput_temp:sum(3):sum(4):sum(5)
     return self.gradInput
 end
 
@@ -44,7 +45,8 @@ function IntensityScale:accGradParameters(input, gradOutput, scale)
     local bsize = input:size()[1]
     local height = gradOutput:size()[3]
     local width = gradOutput:size()[4]
-    local intensities = input:repeatTensor(1,1,height,width)
+    local depth = gradOutput:size()[5]
+    local intensities = input:repeatTensor(1,1,height,width,depth)
     -- Element-wise multiplication between intensities and gradOutput
     intensities:cmul(gradOutput)
     -- Sum gradients over batch dimension
@@ -59,7 +61,7 @@ end
 
 function IntensityScale:reset()
     local sqrt = torch.sqrt
-    local numWeights = self.numCapsules*self.height*self.width
+    local numWeights = self.numCapsules*self.height*self.width*self.depth
     self.template = torch.randn(self.template:size())*0.02
     -- self.template = torch.randn(self.template:size()):div(torch.sqrt(self.height*self.width))
     self.gradTemplate:zero()
