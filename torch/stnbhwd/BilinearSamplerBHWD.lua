@@ -6,7 +6,7 @@ local BilinearSamplerBHWD, parent = torch.class('nn.BilinearSamplerBHWD', 'nn.Mo
    BilinearSamplerBHWD:updateGradInput({inputImages, grids}, gradOutput)
 
    BilinearSamplerBHWD will perform bilinear sampling of the input images according to the
-   normalized coordinates provided in the grid. Output will be of same size as the grids, 
+   normalized coordinates provided in the grid. Output will be of same size as the grids,
    with as many features as the input images.
 
    - inputImages has to be in BHWD layout
@@ -26,7 +26,6 @@ end
 function BilinearSamplerBHWD:check(input, gradOutput)
    local inputImages = input[1]
 	local grids = input[2]
-
    assert(inputImages:nDimension()==4)
    assert(grids:nDimension()==4)
    assert(inputImages:size(1)==grids:size(1)) -- batch
@@ -66,14 +65,14 @@ function BilinearSamplerBHWD:updateOutput(input)
 
    self:check(input)
 
-   self.output:resize(inputImages:size(1), grids:size(2), grids:size(3), inputImages:size(4))	
+   self.output:resize(inputImages:size(1), grids:size(2), grids:size(3), inputImages:size(4))
 
 	inputImages.nn.BilinearSamplerBHWD_updateOutput(self, inputImages, grids)
 
    if _inputImages:nDimension()==3 then
       self.output=self.output:select(1,1)
    end
-	
+
    return self.output
 end
 
@@ -109,6 +108,6 @@ function BilinearSamplerBHWD:updateGradInput(_input, _gradOutput)
       self.gradInput[1]=self.gradInput[1]:select(1,1)
       self.gradInput[2]=self.gradInput[2]:select(1,1)
    end
-   
+
    return self.gradInput
 end

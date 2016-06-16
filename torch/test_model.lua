@@ -3,6 +3,9 @@ require 'cutorch'
 require 'cunn'
 require 'load_dataset'
 require 'IntensityScale'
+require 'IntensityScaleTable'
+require 'TemplateLayer'
+require 'TemplateConstant'
 require 'stn'
 require 'optim'
 require 'xlua'
@@ -24,9 +27,9 @@ if not opt then
    cmd:option('-visualize', false, 'visualize input data and weights during training')
    cmd:option('-plot', false, 'live plot')
    cmd:option('-optimization', 'SGD', 'optimization method: SGD | ASGD | CG | LBFGS | RMSProp')
-   cmd:option('-translation', false)
-   cmd:option('-rotation', false)
-   cmd:option('-scaling', false)
+   cmd:option('-translation', true)
+   cmd:option('-rotation', true)
+   cmd:option('-scaling', true)
    cmd:option('-hidden1', 1000)
    cmd:option('-hidden2', 1000)
    cmd:option('-hidden3', 1000)
@@ -64,6 +67,11 @@ hiddenSize1 = opt.hidden1
 hiddenSize2 = opt.hidden2
 hiddenSize3 = opt.hidden3
 numCapsules = opt.templateNumber
+capSize1 = 10
+capSize2 = 10
+capSize3 = 10
+capSize4 = 1
+capSize5 = 1
 numTransformParams = 0
 if not(opt.rotation or opt.scaling or opt.translation) then
     numTransformParams = 6
@@ -125,40 +133,20 @@ else
     encoder:add(nn.Linear(hiddenSize2, hiddenSize3))
     encoder:add(nn.BatchNormalization(hiddenSize3))
     encoder:add(nn.ReLU())
-    encoder:add(nn.Linear(hiddenSize3, numCapsules*(numTransformParams+1))) -- +1 for intensity
+    encoder:add(nn.Linear(hiddenSize3, capSize1*capSize2*(numTransformParams+1))) -- +1 for intensity
 end
 -- Define the decoder
-concat = nn.ConcatTable()
--- 1st concat branch: scale templates
-seq1 = nn.Sequential()
-seq1:add(nn.Narrow(2,1,numCapsules)) -- Split the obtained representation into a (BatchSize,numCapsules) Tensor of intensities
-seq1:add(nn.View(opt.batchSize, numCapsules,1,1))
-seq1:add(nn.Sigmoid()) -- Intensities should be between 0 and 1
-seq1:add(nn.IntensityScale(numCapsules, t_height, t_width))
-seq1:add(nn.View(opt.batchSize*numCapsules, t_height, t_width, 1))
--- 2nd concat branch: generate sampling grid
-seq2 = nn.Sequential()
-seq2:add(nn.Narrow(2,numCapsules+1,numCapsules*numTransformParams)) -- Split the obtained representation into a (BatchSize,numCapsules*numTransformParams) Tensor of parameters
--- seq2:add(nn.Tanh())
-seq2:add(nn.View(opt.batchSize*numCapsules, numTransformParams))
-seq2:add(nn.AffineTransformMatrixGenerator(opt.rotation, opt.scaling, opt.translation))
-seq2:add(nn.AffineGridGeneratorBHWD(height, width))
-concat:add(seq1)
-concat:add(seq2)
--- Put the two together with the sampler to form the decoder
 decoder = nn.Sequential()
+-- Create a {templates, template parameters} table
+concat = nn.ConcatTable()
+concat:add(nn.TemplateConstant(capSize1,12,12)) -- Number of templates, height, width
+concat:add(nn.Identity())
 decoder:add(concat)
-decoder:add(nn.BilinearSamplerBHWD())
-decoder:add(nn.View(opt.batchSize, numCapsules, height, width)) -- This outputs a BatchSize,NumCapsules,height,width Tensor of all transformed templates in the batch
-templateAdder = nn.Sequential()
--- templateAdder:add(nn.Max(1, 3)) -- Dimension, nInputDims
-templateAdder:add(nn.MulConstant(10)) -- boolean indicates in place multiplication
-templateAdder:add(nn.Exp())
-templateAdder:add(nn.Sum(1, 3)) -- Dimension, nInputDims. Outputs a BatchSize,height,width,depth Tensor
-templateAdder:add(nn.Log())
-templateAdder:add(nn.MulConstant(1/10)) -- boolean indicates in place multiplication
--- Add the templates together
-decoder:add(templateAdder)
+decoder:add(nn.TemplateLayer(capSize1,capSize2,capSize3,numTransformParams,12,12,20,20, opt.batchSize, 'max'))
+decoder:add(nn.TemplateLayer(capSize2,capSize3,capSize4,numTransformParams,20,20,20,20, opt.batchSize, 'max'))
+decoder:add(nn.TemplateLayer(capSize3,capSize4,capSize5,numTransformParams,20,20,32,32, opt.batchSize, 'max'))
+decoder:add(nn.SelectTable(1))
+decoder:add(nn.View(32,32))
 
 -- -- Put it all together in an autoencoder model
 model = nn.Sequential()
@@ -200,6 +188,7 @@ function feval(x)
     gradParameters:zero()
     -- evaluate prediction, loss and backpropagate gradients
     local prediction = model:forward(inputs)
+    -- print(prediction:size())
     local loss = criterion:forward(prediction, targets)
     model:backward(inputs, criterion:backward(prediction, targets))
     return loss, gradParameters
@@ -274,10 +263,10 @@ function displaySamples(show_inputs, show_outputs, show_templates)
 
     outputs = model:forward(inputs)
 
-    intscale = model:findModules('nn.IntensityScale')
+    -- intscale = model:findModules('nn.IntensityScale')
     inputs = inputs:double()
     outputs = outputs:double()
-    templates = intscale[1].template:double():view(numCapsules,t_height,t_width)
+    -- templates = intscale[1].template:double():view(numCapsules,t_height,t_width)
 
     if show_inputs then
         disp.image(inputs)
@@ -285,9 +274,9 @@ function displaySamples(show_inputs, show_outputs, show_templates)
     if show_outputs then
         disp.image(outputs)
     end
-    if show_templates then
-        disp.image(templates)
-    end
+    -- if show_templates then
+        -- disp.image(templates)
+    -- end
 end
 
 model:cuda()
@@ -301,7 +290,7 @@ optim_params = {
 epoch = 1
 batch_index = 0
 shuffle = torch.randperm(trainData:size())
-while epoch<50 do
+while epoch<11 do
     local train_loss = train()
     local valid_loss = validate()
     local test_loss = test()

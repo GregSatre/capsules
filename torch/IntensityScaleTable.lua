@@ -8,15 +8,17 @@ function IntensityScaleTable:__init()
 end
 
 -- input format : { (batchSize, sizeIn, 1, height, width) templates Tensor,
---                  (batchSize, sizeIn, sizeOut, 1,1) intensities Tensor}
--- output format : (batchSize, sizeIn, sizeOut, height, width) Tensor
+--                  (batchSize, sizeIn, sizeInter, 1,1) intensities Tensor}
+-- output format : (batchSize, sizeIn, sizeInter, height, width) Tensor
 function IntensityScaleTable:updateOutput(input)
     local bsize = input[2]:size()[1]
     local sizeIn = input[2]:size()[2]
-    local sizeOut = input[2]:size()[3]
-    local templates = input[1]:repeatTensor(1,1,sizeOut,1,1)
+    local sizeInter = input[2]:size()[3]
+    -- print(input[1]:size())
+    local templates = input[1]:repeatTensor(1,1,sizeInter,1,1)
+    -- print(templates:size())
+    -- print(input[2]:size())
     local intensities = input[2]:expand(templates:size())
-
     self.output = templates
     -- Element-wise multiplication between intensities and output
     self.output:cmul(intensities)
@@ -26,12 +28,12 @@ end
 function IntensityScaleTable:updateGradInput(input, gradOutput)
     local bsize = input[2]:size()[1]
     local sizeIn = input[2]:size()[2]
-    local sizeOut = input[2]:size()[3]
-    local templates = input[1]:repeatTensor(1,1,sizeOut,1,1)
+    local sizeInter = input[2]:size()[3]
+    local templates = input[1]:repeatTensor(1,1,sizeInter,1,1)
     local intensities = input[2]:expand(templates:size()):clone()
     -- Gradients of templates w/r to ouput
     intensities:cmul(gradOutput)
-    self.gradInput[1] = intensities:sum(3) -- sum over sizeOut-repeated dimension
+    self.gradInput[1] = intensities:sum(3) -- sum over sizeInter-repeated dimension
     -- Gradients of intensities w/r to output
     local gradOutput_temp = gradOutput:clone()
     -- Element-wise multiplication between templates and gradOutput_temp
