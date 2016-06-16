@@ -290,22 +290,25 @@ optim_params = {
 epoch = 1
 batch_index = 0
 shuffle = torch.randperm(trainData:size())
-while epoch<11 do
-    local train_loss = train()
-    local valid_loss = validate()
-    local test_loss = test()
-    if epoch%50 == 0 then
-        displaySamples(false, false, true)
+function trainUntilEpoch(epoch_lim)
+    while epoch<epoch_lim do
+        local train_loss = train()
+        local valid_loss = validate()
+        local test_loss = test()
+        if epoch%50 == 0 then
+            displaySamples(false, false, true)
+        end
+        logger:add{['mean train error'] = train_loss,
+                   ['mean valid error'] = valid_loss,
+                   ['mean test error'] = test_loss}
+        logger:style{['mean train error'] = '-',
+                     ['mean valid error'] = '-',
+                     ['mean test error'] = '-'}
+        logger:plot()
     end
-    logger:add{['mean train error'] = train_loss,
-               ['mean valid error'] = valid_loss,
-               ['mean test error'] = test_loss}
-    logger:style{['mean train error'] = '-',
-                 ['mean valid error'] = '-',
-                 ['mean test error'] = '-'}
-    logger:plot()
 end
 
+trainUntilEpoch(25)
 displaySamples(true, true, true)
 -- save current net
 if opt.save then

@@ -84,6 +84,7 @@ function initParamPredictor(sizeIn, sizeInter, sizeOut, numTransformParams)
     local paramPredictor = nn.Sequential()
     paramPredictor:add(nn.SelectTable(2))
     -- Insert batch norm here?
+    -- paramPredictor:add(nn.BatchNormalization(sizeIn*sizeInter*(numTransformParams+1)))
     paramPredictor:add(nn.ELU())
     paramPredictor:add(nn.Linear(sizeIn*sizeInter*(numTransformParams+1), sizeInter*sizeOut*(numTransformParams+1)))
     return paramPredictor
