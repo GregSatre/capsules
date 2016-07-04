@@ -33,16 +33,17 @@ if not opt then
    cmd:option('-hidden1', 1000)
    cmd:option('-hidden2', 1000)
    cmd:option('-hidden3', 1000)
+   cmd:option('-capSize1', 4)
+   cmd:option('-capSize2', 4)
+   cmd:option('-capSize3', 4)
+   cmd:option('-sumType', '', 'Type of sum to use for combining templates')
    cmd:option('-templateSize', 12, 'size in pixels of square template')
    cmd:option('-templateNumber', 10, 'number of templates')
    cmd:option('-learningRate', 1e-2, 'learning rate at t=0')
    cmd:option('-batchSize', 1, 'mini-batch size (1 = pure stochastic)')
-   cmd:option('-weightDecay', 0, 'weight decay (SGD only)')
-   cmd:option('-momentum', 0, 'momentum (SGD only)')
-   cmd:option('-nesterov', false, 'use nesterov momentum (SGD only)')
-   cmd:option('-alpha', 0.99, 'Decay rate (RMSProp only)')
-   cmd:option('-t0', 1, 'start averaging at t0 (ASGD only), in nb of epochs')
-   cmd:option('-maxIter', 2, 'maximum nb of iterations for CG and LBFGS')
+   cmd:option('-weightDecay', 0, 'Weight decay (corresponds to L2 regularization')
+   cmd:option('-clamp', false, 'Clamp the parameters to constrain their range')
+   cmd:option('-renorm', false, 'Renormalize the template parameters')
    cmd:text()
    opt = cmd:parse(arg or {})
 end
@@ -67,9 +68,9 @@ hiddenSize1 = opt.hidden1
 hiddenSize2 = opt.hidden2
 hiddenSize3 = opt.hidden3
 numCapsules = opt.templateNumber
-capSize1 = 10
-capSize2 = 10
-capSize3 = 10
+capSize1 = opt.capSize1
+capSize2 = opt.capSize2
+capSize3 = opt.capSize3
 capSize4 = 1
 capSize5 = 1
 numTransformParams = 0
@@ -95,9 +96,6 @@ coefL2 = 0
 -- Load train and test sets
 trainData = mnist.loadTrainSet(n_train_samples+n_valid_samples, geometry)
 testData = mnist.loadTestSet(n_test_samples, geometry)
--- Normalize train and test sets
-trainData:normalizeGlobal()
-testData:normalizeGlobal()
 -- Separate training and validation sets
 validData = {
                   data = trainData.data[{{n_train_samples+1, n_train_samples+n_valid_samples}, {}, {}, {}}]:clone(),
@@ -107,6 +105,12 @@ trainData = {
                 data = trainData.data[{{1, n_train_samples}, {}, {}, {}}]:clone(),
                 size = function() return n_train_samples end
               }
+-- Normalize train/valid/test sets
+local std = trainData.data:std()
+local mean = trainData.data:mean()
+trainData.data:add(-mean):mul(1/std)
+validData.data:add(-mean):mul(1/std)
+testData.data:add(-mean):mul(1/std)
 ----------------------------------------------------------------------
 -- Define the model
 -- Feedforward encoder
@@ -139,12 +143,14 @@ end
 decoder = nn.Sequential()
 -- Create a {templates, template parameters} table
 concat = nn.ConcatTable()
-concat:add(nn.TemplateConstant(capSize1,12,12)) -- Number of templates, height, width
+concat:add(nn.TemplateConstant(capSize1,opt.templateSize,opt.templateSize)) -- Number of templates, height, width
 concat:add(nn.Identity())
 decoder:add(concat)
-decoder:add(nn.TemplateLayer(capSize1,capSize2,capSize3,numTransformParams,12,12,20,20, opt.batchSize, 'max'))
-decoder:add(nn.TemplateLayer(capSize2,capSize3,capSize4,numTransformParams,20,20,20,20, opt.batchSize, 'max'))
-decoder:add(nn.TemplateLayer(capSize3,capSize4,capSize5,numTransformParams,20,20,32,32, opt.batchSize, 'max'))
+decoder:add(nn.TemplateLayer(capSize1,capSize2,capSize3,numTransformParams,opt.templateSize,opt.templateSize,opt.templateSize,opt.templateSize, opt.batchSize, opt.sumType))
+decoder:add(nn.TemplateLayer(capSize2,capSize3,capSize4,numTransformParams,opt.templateSize,opt.templateSize,opt.templateSize,opt.templateSize, opt.batchSize, opt.sumType))
+decoder:add(nn.TemplateLayer(capSize3,capSize4,capSize5,numTransformParams,opt.templateSize,opt.templateSize,32,32, opt.batchSize, opt.sumType))
+-- decoder:add(nn.TemplateLayer(capSize4,capSize5,1,numTransformParams,12,12,32,32, opt.batchSize, ''))
+-- decoder:add(nn.TemplateLayer(capSize5,1,1,numTransformParams,12,12,32,32, opt.batchSize, ''))
 decoder:add(nn.SelectTable(1))
 decoder:add(nn.View(32,32))
 
@@ -152,6 +158,7 @@ decoder:add(nn.View(32,32))
 model = nn.Sequential()
 model:add(encoder)
 model:add(decoder)
+model:reset()
 
 criterion = nn.MSECriterion()
 
@@ -168,6 +175,8 @@ if preTrainedLoad then
 else
     parameters, gradParameters = model:getParameters()
 end
+constant = model:findModules('nn.TemplateConstant')
+templates = constant[1].templates:view(capSize1,t_height,t_width)
 
 function getNextBatch()
     local inputs = torch.Tensor(opt.batchSize,height,width)
@@ -210,6 +219,14 @@ function train()
     while batch_index < max_batches do
         xlua.progress(batch_index, max_batches)
         _, loss = optim.rmsprop(feval, parameters, optim_params)
+        -- Constrain weights to have max absolute value of 3
+        if opt.clamp then
+            parameters:clamp(-3,3)
+        end
+        -- Normalize the template parameters so that their norm does not exceed 35
+        if opt.renorm then
+            templates:renorm(2,1,35)
+        end
         batch_index = batch_index + 1
         mean_batch_loss = mean_batch_loss + loss[1]
     end
@@ -255,18 +272,18 @@ function test()
     return mean_test_loss
 end
 
-function displaySamples(show_inputs, show_outputs, show_templates)
-    inputs = torch.Tensor(opt.batchSize,height,width):cuda()
+function displaySamples(model, show_inputs, show_outputs, show_templates)
+    local inputs = torch.Tensor(opt.batchSize,height,width):cuda()
     for i=1,opt.batchSize do
         inputs[i]=testData.data[i]
     end
 
-    outputs = model:forward(inputs)
+    local outputs = model:forward(inputs)
 
-    -- intscale = model:findModules('nn.IntensityScale')
+    local model_constant = model:findModules('nn.TemplateConstant')
     inputs = inputs:double()
     outputs = outputs:double()
-    -- templates = intscale[1].template:double():view(numCapsules,t_height,t_width)
+    local model_templates = constant[1].templates:double():view(capSize1,t_height,t_width)
 
     if show_inputs then
         disp.image(inputs)
@@ -274,9 +291,9 @@ function displaySamples(show_inputs, show_outputs, show_templates)
     if show_outputs then
         disp.image(outputs)
     end
-    -- if show_templates then
-        -- disp.image(templates)
-    -- end
+    if show_templates then
+        disp.image(templates)
+    end
 end
 
 model:cuda()
@@ -284,20 +301,53 @@ logger = optim.Logger(paths.concat(opt.save, 'train.log'))
 inputs, _ = getNextBatch()
 
 optim_params = {
-    learningRate = opt.learningRate
+    learningRate = opt.learningRate,
+    weightDecay = opt.weightDecay
 }
 
 epoch = 1
 batch_index = 0
 shuffle = torch.randperm(trainData:size())
-function trainUntilEpoch(epoch_lim)
-    while epoch<epoch_lim do
+function trainUntilUserExit()
+    -- local constant = model:findModules('nn.TemplateConstant')
+    -- local templates = constant[1].templates
+    -- while true do
+    --     io.write(string.format("Currently on epoch %d. Continue (y/n)? ",epoch))
+    --     local continue = io.read()
+    --     if continue == "y" then
+    --         io.write("How many more epochs? ")
+    --         local epoch_lim = epoch + tonumber(io.read())
+    --         while epoch<epoch_lim and continue do
+    --             local train_loss = train()
+    --             local valid_loss = validate()
+    --             local test_loss = test()
+    --             print("Parameters L2 norm: "..tostring(parameters:norm()))
+    --             print("Parameters max: "..tostring(parameters:max()))
+    --             print("Templates L2 norm: "..tostring(templates:norm()))
+    --             print("Templates max: "..tostring(templates:max()))
+    --             print("Templates min: "..tostring(templates:min()))
+    --             logger:add{['mean train error'] = train_loss,
+    --                        ['mean valid error'] = valid_loss,
+    --                        ['mean test error'] = test_loss}
+    --             logger:style{['mean train error'] = '-',
+    --                          ['mean valid error'] = '-',
+    --                          ['mean test error'] = '-'}
+    --             logger:plot()
+    --         end
+    --         displaySamples(false, true, true)
+    --     elseif continue == "n" then
+    --         break
+    --     end
+    -- end
+    while epoch<=500 do
         local train_loss = train()
         local valid_loss = validate()
         local test_loss = test()
-        if epoch%50 == 0 then
-            displaySamples(false, false, true)
-        end
+        print("Parameters L2 norm: "..tostring(parameters:norm()))
+        print("Parameters max: "..tostring(parameters:max()))
+        print("Templates L2 norm: "..tostring(templates:norm()))
+        print("Templates max: "..tostring(templates:max()))
+        print("Templates min: "..tostring(templates:min()))
         logger:add{['mean train error'] = train_loss,
                    ['mean valid error'] = valid_loss,
                    ['mean test error'] = test_loss}
@@ -306,17 +356,29 @@ function trainUntilEpoch(epoch_lim)
                      ['mean test error'] = '-'}
         logger:plot()
     end
+    -- displaySamples(model, false, true, true)
 end
 
-trainUntilEpoch(25)
-displaySamples(true, true, true)
--- save current net
-if opt.save then
-    local model_file = paths.concat(opt.save, 'autoencoderSPN'..tostring(epoch)..'.net')
-    os.execute('mkdir -p ' .. opt.save)
-    print('==> saving autoencoder to '..model_file)
-    torch.save(model_file, model)
-    local encoder_file = paths.concat(opt.save, 'encoderSPN'..tostring(epoch)..'.net')
-    print('==> saving encoder to '..encoder_file)
-    torch.save(encoder_file, encoder)
+function saveParams()
+    -- save current net
+    if opt.save then
+        local model_file = paths.concat(opt.save, 'autoencoderSPN'..tostring(epoch)..'.net')
+        os.execute('mkdir -p ' .. opt.save)
+        print('==> saving autoencoder to '..model_file)
+        torch.save(model_file, model)
+        local encoder_file = paths.concat(opt.save, 'encoderSPN'..tostring(epoch)..'.net')
+        print('==> saving encoder to '..encoder_file)
+        torch.save(encoder_file, encoder)
+        -- save the training parameters
+        cmd:log(opt.save..'/log.txt', opt)
+    end
 end
+
+displaySamples(model, true, false, false)
+
+-- local status, err = pcall(trainUntilUserExit)
+-- if not status then
+--     print(err)
+-- end
+
+-- saveParams()
