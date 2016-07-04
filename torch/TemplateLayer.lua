@@ -56,7 +56,8 @@ function initTemplateTransformer(sizeIn, sizeInter, numTransformParams, heightIn
     local seq = nn.Sequential()
     seq:add(nn.Narrow(2,1,sizeIn*sizeInter))
     seq:add(nn.View(batchSize,sizeIn,sizeInter,1,1))
-    seq:add(nn.SoftSign()) -- Intensities should be between 0 and 1
+    -- Intensities should be between 0 and 1
+    seq:add(nn.SoftSign())
     narrowIntensities:add(seq)
     intensifyTemplates:add(narrowIntensities)
     intensifyTemplates:add(nn.IntensityScaleTable())
@@ -105,39 +106,3 @@ function templateSum(sumType)
     end
     return templateSum
 end
-
--- local parallel = nn.ParallelTable()
-
--- local templateTransformer = nn.Sequential()
--- local concat = nn.ConcatTable()
---     local intensifyTemplates = nn.Sequential()
---         local narrowIntensities = nn.ParallelTable()
---         narrowIntensities:add(nn.Identity())
---             local seq = nn.Sequential()
---             seq:add(nn.Narrow(2,1,sizeIn*sizeInter))
---             seq:add(nn.View(batchSize,sizeIn,sizeInter,1,1))
---             seq:add(nn.Sigmoid()) -- Intensities should be between 0 and 1
---         narrowIntensities:add(seq)
---     intensifyTemplates:add(narrowIntensities)
---     intensifyTemplates:add(nn.IntensityScaleTable())
--- concat:add(intensifyTemplates)
---     local narrowParams = nn.Sequential()
---     narrowParams:add(nn.SelectTable(2))
---     narrowParams:add(nn.Narrow(2,sizeIn*sizeInter+1,sizeIn*sizeInter*numTransformParams))
---     narrowParams:add(nn.View(batchSize*sizeIn*sizeInter, numTransformParams))
---     narrowParams:add(nn.AffineTransformMatrixGenerator(true, true, true))
---     narrowParams:add(nn.AffineGridGeneratorBHWD(heightInter, widthInter))
--- concat:add(narrowParams)
--- templateTransformer:add(concat)
--- templateTransformer:add(nn.BilinearSamplerBHWD())
--- templateTransformer:add(nn.View(batchSize, sizeIn, sizeInter, heightInter, widthInter))
--- templateTransformer:add(nn.Sum(2))
-
-
--- local paramPredictor = nn.Sequential()
--- -- Insert batch norm here?
--- paramPredictor:add(nn.ReLU())
--- paramPredictor:add(nn.Linear(sizeIn*sizeInter(numTransformParams+1)), sizeInter*sizeOut*(numTransformParams+1))
-
--- parallel:add(templateTransformer)
--- parallel:add(paramPredictor)
